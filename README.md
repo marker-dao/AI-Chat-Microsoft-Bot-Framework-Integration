@@ -1,1 +1,2 @@
-# AI-Chat-Microsoft-Bot-Framework-Intagration
+npm i
+node server.js

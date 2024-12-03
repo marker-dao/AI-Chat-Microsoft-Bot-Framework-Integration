@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>DevExtreme jQuery Example</title>
+
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <link rel="stylesheet" href="dx.fluent.blue.light.css">
+
+    <script type="text/javascript" src="jquery.js"></script>
+    <script type="text/javascript" src="dx.all.debug.js" charset="utf-8"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+    <style>
+        .demo-container {
+            display: flex;
+            justify-content: center;
+        }
+
+        .dx-chat {
+            max-width: 900px;
+        }
+
+        .dx-chat-messagelist-empty-image {
+            display: none;
+        }
+
+        .dx-chat-messagelist-empty-message {
+            font-size: var(--dx-font-size-heading-5);
+        }
+
+        .dx-chat-messagebubble-content,
+        .dx-chat-messagebubble-text {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .dx-bubble-button-container {
+            display: none;
+        }
+
+        .dx-button {
+            display: inline-block;
+            color: var(--dx-color-icon);
+        }
+
+        .dx-chat-messagegroup-alignment-start:last-child .dx-chat-messagebubble:last-child .dx-bubble-button-container {
+            display: flex;
+            gap: 4px;
+            margin-top: 8px;
+        }
+
+        .dx-chat-messagebubble-content>div>p:first-child {
+            margin-top: 0;
+        }
+
+        .dx-chat-messagebubble-content>div>p:last-child {
+            margin-bottom: 0;
+        }
+
+        .dx-chat-messagebubble-content ol,
+        .dx-chat-messagebubble-content ul {
+            white-space: normal;
+        }
+
+        .dx-chat-messagebubble-content h1,
+        .dx-chat-messagebubble-content h2,
+        .dx-chat-messagebubble-content h3,
+        .dx-chat-messagebubble-content h4,
+        .dx-chat-messagebubble-content h5,
+        .dx-chat-messagebubble-content h6 {
+            font-size: revert;
+            font-weight: revert;
+        }
+    </style>
+</head>
+
+<body class="dx-surface">
+    <div role="main">
+        <h1 style="position: fixed; left: 0; top: 0; clip: rect(1px, 1px, 1px, 1px);">Test header</h1>
+
+        <div class="dx-viewport">
+            <div class="demo-container">
+                <div id="dx-ai-chat"></div>
+            </div>
+        </div>
+
+
+        <script type="module">
+            import { unified } from 'https://esm.sh/unified@11?bundle';
+            import remarkParse from 'https://esm.sh/remark-parse@11?bundle';
+            import remarkRehype from 'https://esm.sh/remark-rehype@11?bundle';
+            import rehypeStringify from 'https://esm.sh/rehype-stringify@10?bundle';
+
+            const sessionId = Math.random().toString(36).substring(7);
+            const endpoint = '/webhook';
+            const REGENERATION_TEXT = 'Regeneration...';
+            const CHAT_MESSAGEBOX_BUTTON_CLASS = 'dx-chat-messagebox-button';
+            const CHAT_MESSAGEBOX_TEXTAREA_CLASS = 'dx-chat-messagebox-textarea';
+
+            const user = {
+                id: 'user',
+            };
+
+            const assistant = {
+                id: 'assistant',
+                name: 'Virtual Assistant',
+            };
+
+            $(() => {
+                const store = [];
+                let lastMessageText = '';
+
+                DevExpress.localization.loadMessages({
+                    'en': {
+                        'dxChat-emptyListMessage': 'Chat is Empty',
+                        'dxChat-emptyListPrompt': 'AI Assistant is ready to answer your questions.',
+                        'dxChat-textareaPlaceholder': 'Ask AI Assistant...',
+                    },
+                });
+
+                async function getAIResponse(text) {
+                    const response = await fetch('http://localhost:3000/webhook', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ message: text, sessionId }),
+                    });
+
+                    const data = await response.json();
+
+                    return data.response;
+                };
+
+                function pushAlert(error) {
+                    instance.option({
+                        alerts: [{
+                            message: error.message,
+                        }],
+                    });
+
+                    setTimeout(() => {
+                        instance.option({ alerts: [] });
+                    }, 10000);
+                };
+
+                function toggleDisabledState(disabled) {
+                    const $button = instance.element().find(`.${CHAT_MESSAGEBOX_BUTTON_CLASS}`);
+                    const $textArea = instance.element().find(`.${CHAT_MESSAGEBOX_TEXTAREA_CLASS}`);
+                    const buttonInstance = $button.dxButton('instance');
+                    const textAreaInstance = $textArea.dxTextArea('instance');
+
+                    buttonInstance.option({ disabled });
+                    textAreaInstance.option({ disabled });
+
+                    if (!disabled) {
+                        textAreaInstance.focus();
+                    }
+                };
+
+                async function processMessageSending(text) {
+                    toggleDisabledState(true);
+
+                    instance.option({ typingUsers: [assistant] });
+
+                    try {
+                        const aiResponse = await getAIResponse(text);
+
+                        setTimeout(() => {
+                            instance.option({ typingUsers: [] });
+
+                            renderMessage(aiResponse);
+                        }, 200);
+                    } catch (error) {
+                        instance.option({ typingUsers: [] });
+
+                        pushAlert(error);
+                    } finally {
+                        toggleDisabledState(false);
+                    }
+                };
+
+                async function regenerate() {
+                    toggleDisabledState(true);
+
+                    try {
+                        const { items } = instance.option();
+                        const lastUserMessage = items.filter(item => item.author.id === user.id).at(-1);
+                        const aiResponse = await getAIResponse(lastUserMessage.text);
+
+                        updateLastMessage(aiResponse);
+                    } catch (error) {
+                        updateLastMessage(lastMessageText);
+                        pushAlert(error);
+                    } finally {
+                        toggleDisabledState(false);
+                    }
+                };
+
+                function renderMessage(text) {
+                    const message = {
+                        id: Date.now(),
+                        timestamp: new Date(),
+                        author: assistant,
+                        text,
+                    };
+
+                    customStore.push([{ type: 'insert', data: message }]);
+                };
+
+                function updateLastMessage(text) {
+                    const { items } = instance.option();
+                    const lastMessage = items.at(-1);
+
+                    lastMessageText = text ? '' : lastMessage.text;
+
+                    const data = {
+                        text: text ?? REGENERATION_TEXT,
+                    };
+
+                    customStore.push([{
+                        type: 'update',
+                        key: lastMessage.id,
+                        data,
+                    }]);
+                };
+
+                function convertToHtml(value) {
+                    const result = unified()
+                        .use(remarkParse)
+                        .use(remarkRehype)
+                        .use(rehypeStringify)
+                        .processSync(value)
+                        .toString();
+
+                    return result;
+                };
+
+                const customStore = new DevExpress.data.CustomStore({
+                    key: 'id',
+                    load: () => {
+                        const d = $.Deferred();
+
+                        setTimeout(function () {
+                            d.resolve([...store]);
+                        });
+
+                        return d.promise();
+                    },
+                    insert: (message) => {
+                        const d = $.Deferred();
+
+                        setTimeout(function () {
+                            store.push(message);
+                            d.resolve();
+                        });
+
+                        return d.promise();
+                    },
+                });
+
+                const instance = $("#dx-ai-chat").dxChat({
+                    dataSource: customStore,
+                    reloadOnChange: false,
+                    showAvatar: false,
+                    showDayHeaders: false,
+                    user,
+                    height: 710,
+                    onMessageEntered: (e) => {
+                        const { message } = e;
+
+                        customStore.push([{ type: 'insert', data: { id: Date.now(), ...message } }]);
+
+                        processMessageSending(message.text);
+                    },
+                    messageTemplate: (data, element) => {
+                        const { message } = data;
+
+                        if (message.text === REGENERATION_TEXT) {
+                            element.text(REGENERATION_TEXT);
+                            return;
+                        }
+
+                        const $textElement = $('<div>')
+                            .addClass('dx-chat-messagebubble-text')
+                            .html(convertToHtml(message.text))
+                            .appendTo(element);
+
+                        const $buttonContainer = $('<div>')
+                            .addClass('dx-bubble-button-container');
+
+                        $('<div>')
+                            .dxButton({
+                                icon: 'copy',
+                                stylingMode: 'text',
+                                hint: 'Copy',
+                                onClick: ({ component }) => {
+                                    navigator.clipboard.writeText($textElement.text());
+                                    component.option({ icon: 'check' });
+                                    setTimeout(() => {
+                                        component.option({ icon: 'copy' });
+                                    }, 5000);
+                                },
+                            })
+                            .appendTo($buttonContainer);
+
+                        $('<div>')
+                            .dxButton({
+                                icon: 'refresh',
+                                stylingMode: 'text',
+                                hint: 'Regenerate',
+                                onClick: () => {
+                                    updateLastMessage();
+                                    regenerate();
+                                },
+                            })
+                            .appendTo($buttonContainer);
+
+                        $buttonContainer.appendTo(element);
+                    },
+                }).dxChat('instance');
+            });
+        </script>
+    </div>
+</body>
+</html>
